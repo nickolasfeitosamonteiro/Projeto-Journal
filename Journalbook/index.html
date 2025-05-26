@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="shortcut icon" href="favicon.ico" type="image/x-icon">
+  <title>JournalBook</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f0f0f8;
+      margin: 0;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+
+    h1 {
+      text-align: center;
+      color: #333;
+    }
+
+    textarea {
+      width: 100%;
+      height: 100px;
+      padding: 10px;
+      font-size: 16px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      resize: none;
+      margin-top: 10px;
+    }
+
+    input[type="file"] {
+      margin-top: 10px;
+    }
+
+    button {
+      margin-top: 10px;
+      padding: 10px 20px;
+      background: #4a90e2;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+
+    .preview img {
+      max-width: 100px;
+      margin: 5px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+    }
+
+    .entry {
+      background: #f9f9f9;
+      border-left: 4px solid #4a90e2;
+      padding: 10px;
+      margin-top: 15px;
+      border-radius: 6px;
+      position: relative;
+    }
+
+    .date {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 5px;
+    }
+
+    .entry img {
+      max-width: 100%;
+      margin-top: 10px;
+      border-radius: 6px;
+    }
+
+    .entry button {
+      background: #c0392b;
+      margin-top: 10px;
+    }
+
+    #clearBtn {
+      background: #e74c3c;
+      margin-top: 10px;
+    }
+
+    #messageBox {
+      text-align: center;
+      margin-top: 10px;
+      color: green;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>JournalBook</h1>
+    <textarea id="entryText" placeholder="Escreva sua entrada de hoje..."></textarea><br />
+    <input type="file" id="imageInput" accept="image/*" multiple /><br />
+    <button onclick="saveEntry()">Salvar Entrada</button>
+
+    <div class="preview" id="previewImages"></div>
+    <div id="messageBox"></div>
+    <div id="entries"></div>
+  </div>
+
+  <script>
+    let pastedImages = [];
+
+    function showMessage(msg, color = 'green') {
+      const box = document.getElementById("messageBox");
+      box.textContent = msg;
+      box.style.color = color;
+      setTimeout(() => box.textContent = '', 3000);
+    }
+
+    function saveEntry() {
+      const text = document.getElementById("entryText").value.trim();
+      const inputFiles = document.getElementById("imageInput").files;
+
+      if (text === "" && pastedImages.length === 0 && inputFiles.length === 0) {
+        alert("Digite algo ou adicione/cole imagens!");
+        return;
+      }
+
+      const readFiles = Array.from(inputFiles).map(file => {
+        return new Promise(resolve => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.readAsDataURL(file);
+        });
+      });
+
+      Promise.all(readFiles).then(uploadedImages => {
+        const allImages = [...pastedImages, ...uploadedImages];
+        const entry = {
+          text,
+          date: new Date().toISOString().slice(0, 19).replace("T", " "),
+          images: allImages
+        };
+
+        fetch("save_entry.php", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(entry)
+        })
+        .then(res => res.json())
+        .then(response => {
+          if (response.success) {
+            showMessage("Entrada salva no servidor!");
+            const localEntries = JSON.parse(localStorage.getItem("journalEntries")) || [];
+            localEntries.push(entry);
+            localStorage.setItem("journalEntries", JSON.stringify(localEntries));
+            renderEntries(localEntries);
+            document.getElementById("entryText").value = "";
+            document.getElementById("imageInput").value = "";
+            pastedImages = [];
+            document.getElementById("previewImages").innerHTML = "";
+          } else {
+            showMessage("Erro ao salvar: " + response.error, 'red');
+          }
+        });
+      });
+    }
+
+    function renderEntries(entries = null) {
+      const container = document.getElementById("entries");
+      container.innerHTML = "";
+
+      const data = entries || JSON.parse(localStorage.getItem("journalEntries")) || [];
+
+      data.forEach((entry, index) => {
+        const div = document.createElement("div");
+        div.className = "entry";
+        div.innerHTML = `
+          <div class="date">${entry.date}</div>
+          <p>${entry.text.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
+          ${(entry.images || []).map(img => `<img src="${img}" />`).join("")}
+          <button onclick="deleteEntry(${index})">🗑️ Excluir</button>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    function deleteEntry(index) {
+  let entries = JSON.parse(localStorage.getItem("journalEntries")) || [];
+  const entry = entries[index];
+
+  if (confirm("Tem certeza que quer excluir esta entrada?")) {
+    // Remove do banco
+    fetch("delete_entry.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: entry.id })
+    })
+    .then(res => res.json())
+    .then(response => {
+      if (response.success) {
+        // Remove do localStorage
+        entries.splice(index, 1);
+        localStorage.setItem("journalEntries", JSON.stringify(entries));
+        renderEntries(entries);
+        showMessage("Entrada excluída com sucesso!");
+      } else {
+        showMessage("Erro ao excluir do banco: " + response.error, 'red');
+      }
+    })
+    .catch(err => {
+      console.error("Erro ao excluir:", err);
+      showMessage("Erro na comunicação com o servidor", 'red');
+    });
+  }
+}
+
+    window.addEventListener("paste", function (event) {
+      const items = (event.clipboardData || event.originalEvent.clipboardData).items;
+      for (const item of items) {
+        if (item.type.indexOf("image") !== -1) {
+          const file = item.getAsFile();
+          const reader = new FileReader();
+          reader.onload = function (e) {
+            pastedImages.push(e.target.result);
+            renderPreviewImages();
+          };
+          reader.readAsDataURL(file);
+        }
+      }
+    });
+
+    function renderPreviewImages() {
+      const preview = document.getElementById("previewImages");
+      preview.innerHTML = pastedImages.map(src => `<img src="${src}" />`).join("");
+    }
+
+    window.onload = () => {
+      fetch("load_entries.php")
+        .then(res => res.json())
+        .then(entries => {
+          localStorage.setItem("journalEntries", JSON.stringify(entries));
+          renderEntries(entries);
+        })
+        .catch(() => {
+          renderEntries(); // fallback
+        });
+    };
+  </script>
+</body>
+</html>
